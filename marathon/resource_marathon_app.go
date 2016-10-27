@@ -409,7 +409,7 @@ func readDeploymentEvents(meta interface{}, c chan deploymentEvent) error {
 	}
 }
 
-func waitOnSuccessfulDeployment(c chan deploymentEvent, id string, timeout time.Duration) error {
+func waitOnSuccessfulDeployment(client marathon.Marathon, c chan deploymentEvent, id string, timeout time.Duration) error {
 	select {
 	case dEvent := <-c:
 		if dEvent.id == id {
@@ -421,7 +421,14 @@ func waitOnSuccessfulDeployment(c chan deploymentEvent, id string, timeout time.
 			}
 		}
 	case <-time.After(timeout):
-		return errors.New("Deployment timeout reached. Did not receive any deployment events")
+		// The event stream we use sometimes misses a deployment_success event
+		// Let's be paranoid and use the old method before returning an error
+		// with an additional 30 second timeout
+		err := client.WaitOnDeployment(id, 30)
+		if err != nil {
+			errMsg := fmt.Sprintf("Deployment timeout reached. Did not receive any deployment events and %v", err)
+			return errors.New(errMsg)
+		}
 	}
 	return nil
 }
@@ -445,7 +452,7 @@ func resourceMarathonAppCreate(d *schema.ResourceData, meta interface{}) error {
 	setSchemaFieldsForApp(application, d)
 
 	for _, deploymentID := range application.DeploymentIDs() {
-		err = waitOnSuccessfulDeployment(c, deploymentID.DeploymentID, config.DefaultDeploymentTimeout)
+		err = waitOnSuccessfulDeployment(client, c, deploymentID.DeploymentID, config.DefaultDeploymentTimeout)
 		if err != nil {
 			log.Println("[ERROR] waiting for application for deployment", deploymentID, err)
 			return err
@@ -686,7 +693,7 @@ func resourceMarathonAppUpdate(d *schema.ResourceData, meta interface{}) error {
 		return err
 	}
 
-	err = waitOnSuccessfulDeployment(c, deploymentID.DeploymentID, config.DefaultDeploymentTimeout)
+	err = waitOnSuccessfulDeployment(client, c, deploymentID.DeploymentID, config.DefaultDeploymentTimeout)
 	return err
 }
 

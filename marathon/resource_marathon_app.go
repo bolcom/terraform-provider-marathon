@@ -97,6 +97,44 @@ func resourceMarathonApp() *schema.Resource {
 							Type:     schema.TypeString,
 							Optional: true,
 						},
+						"discovery": &schema.Schema{
+							Type:     schema.TypeList,
+							Optional: true,
+							ForceNew: false,
+							Elem: &schema.Resource{
+								Schema: map[string]*schema.Schema{
+									"ports": &schema.Schema{
+										Type:     schema.TypeList,
+										Optional: true,
+										Elem: &schema.Resource{
+											Schema: map[string]*schema.Schema{
+												"port": &schema.Schema{
+													Type:     schema.TypeList,
+													Optional: true,
+													ForceNew: false,
+													Elem: &schema.Resource{
+														Schema: map[string]*schema.Schema{
+															"number": &schema.Schema{
+																Type:     schema.TypeString,
+																Optional: true,
+															},
+															"name": &schema.Schema{
+																Type:     schema.TypeString,
+																Optional: true,
+															},
+															"protocol": &schema.Schema{
+																Type:     schema.TypeString,
+																Optional: true,
+															},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -571,6 +609,8 @@ func setSchemaFieldsForApp(app *marathon.Application, d *schema.ResourceData) {
 
 		ipAddressMap := make(map[string]interface{})
 		ipAddressMap["network_name"] = ipAddress.NetworkName
+		ipAddressMap["discovery"] = ipAddress.Discovery
+
 		d.Set("ipaddress", &[]interface{}{ipAddressMap})
 	}
 
@@ -851,18 +891,36 @@ func mutateResourceToApplication(d *schema.ResourceData) *marathon.Application {
 		application.Constraints = nil
 	}
 
-	if v, ok := d.GetOk("ipaddress.0.network_name"); ok {
-		t := v.(string)
-
-		discovery := new(marathon.Discovery)
-		discovery = discovery.EmptyPorts()
-
+	if _, ok := d.GetOk("ipaddress.#"); ok {
 		ipAddressPerTask := new(marathon.IPAddressPerTask)
+		discovery := new(marathon.Discovery)
+
+		if v, ok := d.GetOk("ipaddress.0.discovery.0.ports.#"); ok {
+			ports := make([][]string, v.(int))
+
+			for i := range ports {
+				pMap := d.Get(fmt.Sprintf("ipaddress.0.discovery.0.ports.0.port.%d", i)).(map[string]interface{})
+
+				port := marathon.Port{}
+				nr, _ := strconv.Atoi(pMap["number"].(string))
+				port.Number = nr
+				port.Name = pMap["name"].(string)
+				port.Protocol = pMap["protocol"].(string)
+
+				discovery = discovery.AddPort(port)
+			}
+		} else {
+			discovery = discovery.EmptyPorts()
+		}
 		ipAddressPerTask.Discovery = *discovery
 
-		ipAddressPerTask.NetworkName = t
+		if v, ok := d.GetOk("ipaddress.0.network_name"); ok {
+			t := v.(string)
 
-		application = application.SetIPAddressPerTask(*ipAddressPerTask)
+			ipAddressPerTask.NetworkName = t
+
+			application = application.SetIPAddressPerTask(*ipAddressPerTask)
+		}
 	}
 
 	if v, ok := d.GetOk("container.0.type"); ok {
